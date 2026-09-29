@@ -42,6 +42,8 @@ struct StoredSnippet: Identifiable, Sendable, Hashable {
     let fileURL: URL
     var snippet: Snippet
     let sourceRevision: SnippetSourceRevision
+    /// The file's own timestamp, which is what a save moves; `SnippetsStore` folds it into recency.
+    let modifiedAt: Date
 
     var id: String { fileURL.standardizedFileURL.path }
 }

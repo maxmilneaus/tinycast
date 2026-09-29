@@ -20,6 +20,8 @@ final class SnippetsStore {
     var onSnapshot: ((SnippetRepository.Snapshot) -> Void)?
 
     private var repository: SnippetRepository
+    private let usageFileURL: URL
+    @ObservationIgnored private var usage = SnippetUsage()
     @ObservationIgnored private var directoryWatcher: DispatchSourceFileSystemObject?
     @ObservationIgnored private var fileWatchers: [String: DispatchSourceFileSystemObject] = [:]
     @ObservationIgnored private var reloadTask: Task<Void, Never>?
@@ -28,9 +30,12 @@ final class SnippetsStore {
     private var watcherGeneration = 0
     private var isStarted = false
 
-    init(repository: SnippetRepository = SnippetRepository()) {
+    init(repository: SnippetRepository = SnippetRepository(), usageFileURL: URL? = nil) {
         self.repository = repository
         snippetsDirectory = repository.snippetsDirectory
+        self.usageFileURL =
+            usageFileURL
+            ?? repository.channelDirectory.appendingPathComponent("snippet-usage.json")
     }
 
     isolated deinit {
@@ -177,6 +182,12 @@ final class SnippetsStore {
         if showLoadingState { state = .loading }
         let repository = repository
 
+        let usageFileURL = usageFileURL
+        usage.merge(
+            await Task.detached(priority: .utility) {
+                SnippetUsage.load(from: usageFileURL)
+            }.value)
+
         let result = await Task.detached(priority: .utility) {
             do {
                 return RepositoryResult.success(try repository.load())
@@ -201,23 +212,22 @@ final class SnippetsStore {
     }
 
     private func publishLocal(records: [StoredSnippet]) {
-        apply(
-            SnippetRepository.Snapshot(
-                records: records.sorted(by: recordOrder),
-                issues: issues))
+        apply(SnippetRepository.Snapshot(records: records, issues: issues))
     }
 
+    /// The one place a snippet's order is decided: recency first, then name so it stays stable.
     private func apply(_ snapshot: SnippetRepository.Snapshot) {
         guard isStarted else { return }
+        let records = snapshot.records.sorted(by: recordOrder)
         let isUnchanged =
             state == .ready
-            && snippets == snapshot.records
+            && snippets == records
             && issues == snapshot.issues
         if !isUnchanged {
-            snippets = snapshot.records
+            snippets = records
             issues = snapshot.issues
             state = .ready
-            onSnapshot?(snapshot)
+            onSnapshot?(SnippetRepository.Snapshot(records: records, issues: snapshot.issues))
         }
         if syncWatchers(with: snapshot) {
             scheduleReload(after: .milliseconds(150))
@@ -360,9 +370,28 @@ final class SnippetsStore {
         }
     }
 
+    /// A use counts once the text has landed, so a cancelled expansion never reorders anything.
+    func recordUse(id: StoredSnippet.ID, at date: Date) {
+        guard snippets.contains(where: { $0.id == id }) else { return }
+        usage.record(path: id, at: date)
+        let recorded = usage
+        let usageFileURL = usageFileURL
+        Task.detached(priority: .utility) { try? recorded.write(to: usageFileURL) }
+        // Sorted in place: publishing a snapshot here would rebuild the palette mid-delivery.
+        snippets.sort(by: recordOrder)
+    }
+
     private func recordOrder(_ lhs: StoredSnippet, _ rhs: StoredSnippet) -> Bool {
+        let left = recency(of: lhs)
+        let right = recency(of: rhs)
+        if left != right { return left > right }
         let comparison = lhs.snippet.name.localizedCaseInsensitiveCompare(rhs.snippet.name)
         if comparison != .orderedSame { return comparison == .orderedAscending }
         return lhs.id < rhs.id
+    }
+
+    /// Saving and using both count; whichever happened last is the snippet's place in the list.
+    private func recency(of record: StoredSnippet) -> Date {
+        max(record.modifiedAt, usage.lastUsed(at: record.id) ?? .distantPast)
     }
 }

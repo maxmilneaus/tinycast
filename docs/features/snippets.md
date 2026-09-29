@@ -24,6 +24,9 @@ another app.
   Settings form — resolves to no target at all, so a keyword typed there expands nowhere.
 - The on-disk Markdown format is user-authored and user-editable — an interchange format, not an internal
   one.
+- **Recency is the order, and `SnippetsStore` is the only place that decides it.** Most recently saved
+  or expanded first, so every surface lists the same thing; the Markdown carries no timestamps, and a
+  use is recorded beside the library rather than in it.
 
 ## Storage and identity
 
@@ -66,6 +69,35 @@ of the launcher together; keyword expansion and the browser's shortcut keep work
 import can never enable keystroke listening — which is why either importer's summary says the switch is
 still off when snippets land, so a dormant keyword doesn't read as a broken one. `AppCore`'s settings
 sinks re-project on every change.
+
+## Order
+
+The list leads with whatever was **saved or used most recently**. The browser, the launcher section and
+the Settings pane show the same order because `SnippetsStore` sorts once and every other surface keeps
+the order it hands out — `AppIndex.updateSnippets` and the Settings list no longer re-sort by name,
+which they used to.
+
+Recency is the later of two facts:
+
+- **Saved** — the file's own modification date, so an edit, an import or an edit made outside Tinycast
+  moves a snippet. Nothing is written to record it.
+- **Used** — recorded only when an expansion is actually delivered. A cancelled expansion, a refused
+  argument prompt or a keyword that matches nothing records nothing.
+
+Uses live in `snippet-usage.json`, beside the library in `~/Library/Application Support/<bundle-id>/`
+and keyed by the snippet's path, exactly as `StoredSnippet.ID` is. Not in frontmatter: the Markdown is
+an interchange format a person edits, and Tinycast rewriting it for its own bookkeeping would make the
+file partly not theirs. The store reads the file off-main alongside the library and merges newest-wins,
+writes it off-main, and treats an absent or unreadable file as an empty history rather than a failure.
+Entries for deleted files stay put — a few bytes each, and pruning would discard the history of a
+snippet that is only temporarily unreadable.
+
+Recording a use re-sorts the records in memory and publishes **no snapshot**: a snapshot rebuilds the
+launcher's snippet section, and doing that under a live palette mid-delivery is worse than an order
+that settles on the next reload. Two snippets touched in the same instant fall back to name, then path,
+so the list cannot reshuffle between reloads.
+
+There is no setting for any of this. The order is the feature.
 
 ## Importing from Raycast
 

@@ -74,11 +74,11 @@ struct SnippetsSettingsView: View {
 
     private var library: some View {
         Section {
-            if sortedSnippets.isEmpty {
+            if orderedSnippets.isEmpty {
                 Text(snippetsStore.state == .loading ? "Loading snippets…" : "No snippets yet.")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(sortedSnippets) { record in
+                ForEach(orderedSnippets) { record in
                     SnippetSettingsRow(
                         record: record,
                         onEdit: { editor = SnippetEditRequest(record: record) },
@@ -147,11 +147,8 @@ struct SnippetsSettingsView: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var sortedSnippets: [StoredSnippet] {
-        snippetsStore.snippets.sorted {
-            $0.snippet.name.localizedCaseInsensitiveCompare($1.snippet.name) == .orderedAscending
-        }
-    }
+    /// The store already orders these, so the pane lists exactly what the browser lists.
+    private var orderedSnippets: [StoredSnippet] { snippetsStore.snippets }
 
     private var snippetIssueTitle: String {
         let count = snippetsStore.issues.count

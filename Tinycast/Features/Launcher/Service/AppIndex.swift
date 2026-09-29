@@ -524,6 +524,7 @@ final class AppIndex {
     }
 
     func updateSnippets(_ records: [StoredSnippet]) {
+        // Recency order is the store's decision, so entries keep the order they arrive in.
         let entries =
             records
             .filter { $0.snippet.isEnabled }
@@ -536,7 +537,6 @@ final class AppIndex {
                     kind: .snippet,
                     alternateTitles: [record.snippet.keyword].compactMap { $0 })
             }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         guard entries != snippetEntries else { return }
         snippetEntries = entries
         publishEntries()

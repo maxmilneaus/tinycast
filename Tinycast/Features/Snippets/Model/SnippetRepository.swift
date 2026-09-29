@@ -143,7 +143,8 @@ struct SnippetRepository: Sendable {
                             StoredSnippet(
                                 fileURL: fileURL,
                                 snippet: snippet,
-                                sourceRevision: SnippetSourceRevision(content: content)))
+                                sourceRevision: SnippetSourceRevision(content: content),
+                                modifiedAt: Self.modificationDate(of: fileURL)))
                     } catch {
                         issues.append(Issue(fileURL: fileURL, message: error.localizedDescription))
                     }
@@ -208,7 +209,8 @@ struct SnippetRepository: Sendable {
                     return StoredSnippet(
                         fileURL: fileURL,
                         snippet: snippet,
-                        sourceRevision: SnippetSourceRevision(content: content))
+                        sourceRevision: SnippetSourceRevision(content: content),
+                        modifiedAt: Self.modificationDate(of: fileURL))
                 }
             }
         }
@@ -241,6 +243,12 @@ struct SnippetRepository: Sendable {
     private func ensureSnippetsDirectory() throws {
         try FileManager.default.createDirectory(
             at: snippetsDirectory, withIntermediateDirectories: true)
+    }
+
+    /// Unreadable attributes read as the oldest possible date, so such a file simply sorts last.
+    private static func modificationDate(of fileURL: URL) -> Date {
+        (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+            ?? .distantPast
     }
 
     private func markdownFiles(in directory: URL) throws -> [URL] {
@@ -276,7 +284,8 @@ struct SnippetRepository: Sendable {
                 return StoredSnippet(
                     fileURL: fileURL,
                     snippet: snippet,
-                    sourceRevision: SnippetSourceRevision(content: content))
+                    sourceRevision: SnippetSourceRevision(content: content),
+                    modifiedAt: Self.modificationDate(of: fileURL))
             } catch {
                 if FileManager.default.fileExists(atPath: fileURL.path) {
                     suffix += 1

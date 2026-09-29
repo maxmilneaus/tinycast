@@ -217,6 +217,7 @@ final class SnippetCoordinator {
         }
         completeSnippetExpansion(
             result,
+            id: id,
             target: target,
             expectedKeyword: expectedKeyword,
             keywordLength: keywordLength,
@@ -262,6 +263,7 @@ final class SnippetCoordinator {
                 userArguments: arguments)
             completeSnippetExpansion(
                 result,
+                id: record.id,
                 target: target,
                 expectedKeyword: expectedKeyword,
                 keywordLength: keywordLength,
@@ -272,6 +274,7 @@ final class SnippetCoordinator {
 
     private func completeSnippetExpansion(
         _ result: SnippetTemplateEngine.ExpansionResult,
+        id: StoredSnippet.ID,
         target: InjectionTarget?,
         expectedKeyword: String?,
         keywordLength: Int,
@@ -285,8 +288,10 @@ final class SnippetCoordinator {
             keywordLength: keywordLength,
             automaticGeneration: automaticGeneration,
             onDelivered: { [weak self] in
-                guard let self, let confirmation else { return }
-                self.showMessage(confirmation)
+                guard let self else { return }
+                // Delivered is the only honest signal a use happened; a cancelled one is not.
+                self.store.recordUse(id: id, at: Date())
+                if let confirmation { self.showMessage(confirmation) }
             })
     }
 }

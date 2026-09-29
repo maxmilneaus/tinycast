@@ -20,6 +20,7 @@ struct SnippetsTests {
         try await testDeliveryQueueAndPasteboard()
         await testCopySelectionFallback()
         try await testStoreWatcher()
+        try await testSnippetRecencyOrder()
         testTemplateExpansion()
         testDynamicPlaceholders()
         testTemplateEncodingAndSelectionAlias()
@@ -1042,6 +1043,63 @@ struct SnippetsTests {
         store.stop()
     }
 
+    /// Recency is the whole ordering rule, so it has to hold across a save, a use and a relaunch.
+    private static func testSnippetRecencyOrder() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "tinycast-snippets-recency-\(UUID().uuidString)",
+            isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+        let repository = SnippetRepository(
+            bundleIdentifier: "com.example.recency",
+            applicationSupportRoot: root)
+        let usageFileURL = repository.channelDirectory.appendingPathComponent("snippet-usage.json")
+        let store = SnippetsStore(repository: repository, usageFileURL: usageFileURL)
+        await store.start()
+
+        // Names run opposite to the timestamps, so a name sort cannot pass this by accident.
+        let alpha = repository.snippetsDirectory.appendingPathComponent("alpha.md")
+        let zulu = repository.snippetsDirectory.appendingPathComponent("zulu.md")
+        try SnippetMarkdownSerializer.serialize(Snippet(name: "Alpha", text: "One"))
+            .write(to: alpha, atomically: true, encoding: .utf8)
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 1_000)], ofItemAtPath: alpha.path)
+        try SnippetMarkdownSerializer.serialize(Snippet(name: "Zulu", text: "Two"))
+            .write(to: zulu, atomically: true, encoding: .utf8)
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 2_000)], ofItemAtPath: zulu.path)
+
+        store.retry()
+        await settle { store.snippets.count == 2 }
+        check(
+            "the more recently saved snippet leads",
+            store.snippets.map(\.snippet.name) == ["Zulu", "Alpha"])
+
+        var snapshotCount = 0
+        store.onSnapshot = { _ in snapshotCount += 1 }
+        store.recordUse(id: alpha.path, at: Date(timeIntervalSince1970: 5_000))
+        check(
+            "a use lifts its snippet above a newer save",
+            store.snippets.map(\.snippet.name) == ["Alpha", "Zulu"])
+        check(
+            "recording a use publishes no snapshot",
+            snapshotCount == 0)
+
+        var usage = SnippetUsage()
+        usage.record(path: "/a.md", at: Date(timeIntervalSince1970: 20))
+        usage.record(path: "/a.md", at: Date(timeIntervalSince1970: 10))
+        check(
+            "a use never walks a timestamp backwards",
+            usage.lastUsed(at: "/a.md") == Date(timeIntervalSince1970: 20))
+
+        await settle { fm.fileExists(atPath: usageFileURL.path) }
+        let reopened = SnippetsStore(repository: repository, usageFileURL: usageFileURL)
+        await reopened.start()
+        check(
+            "the order is restored from disk, not only held in memory",
+            reopened.snippets.map(\.snippet.name) == ["Alpha", "Zulu"])
+    }
+
     private static func testTemplateExpansion() {
         var calendar = Calendar(identifier: .gregorian)
         let timeZone = TimeZone(secondsFromGMT: 0)!
@@ -1877,12 +1935,15 @@ struct SnippetsTests {
             listener.status == .off && tap.state == .absent)
     }
 
-    private static func record(_ path: String, _ snippet: Snippet) -> StoredSnippet {
+    private static func record(
+        _ path: String, _ snippet: Snippet, modifiedAt: Date = .distantPast
+    ) -> StoredSnippet {
         let source = SnippetMarkdownSerializer.serialize(snippet)
         return StoredSnippet(
             fileURL: URL(fileURLWithPath: path),
             snippet: snippet,
-            sourceRevision: SnippetSourceRevision(content: source))
+            sourceRevision: SnippetSourceRevision(content: source),
+            modifiedAt: modifiedAt)
     }
 
     private static func expectParseError(_ description: String, content: String, fileURL: URL) {
